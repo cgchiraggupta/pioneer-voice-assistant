@@ -9,7 +9,7 @@ const execAsync = promisify(exec);
 
 // Configuration
 const SARVAM_API_KEY = 'sk_vdjmhd4o_cJhjgkayGjnGPgn8dpQMMFt6';
-const SARVAM_API_URL = 'https://api.sarvam.ai/speech_synthesize';
+const SARVAM_API_URL = 'https://api.sarvam.ai/speech_synthesize/v1';
 
 class ModularAIProcessor {
   constructor() {
@@ -115,16 +115,13 @@ class ModularAIProcessor {
 
   async textToSpeech(text) {
     try {
-      const response = await axios.post(SARVAM_API_URL, {
-        input: text,
-        target_language_code: "en-IN",
-        speaker: "meera",
-        pitch: 0,
-        pace: 1.0,
-        loudness: 1.5,
-        speech_sample_rate: 8000,
-        enable_preprocessing: false,
-        model: "bulbul:v1"
+      const response = await axios.post('https://api.sarvam.ai/text-to-speech', {
+        inputs: [{
+          target_language_code: "en-IN",
+          text: text,
+          speaker: "meera",
+          model: "bulbul:v3"
+        }]
       }, {
         headers: {
           'api-subscription-key': SARVAM_API_KEY,
