@@ -82,12 +82,10 @@ class ComponentTester {
       const SARVAM_API_URL = 'https://api.sarvam.ai/speech_synthesize/v1';
       
       const response = await axios.post('https://api.sarvam.ai/text-to-speech', {
-        inputs: [{
-          target_language_code: "en-IN",
-          text: "Hello, this is a test of the Sarvam TTS system.",
-          speaker: "meera",
-          model: "bulbul:v3"
-        }]
+        target_language_code: "en-IN",
+        text: "Hello, this is a test of the Sarvam TTS system.",
+        speaker: "pooja",
+        model: "bulbul:v3"
       }, {
         headers: {
           'api-subscription-key': SARVAM_API_KEY,

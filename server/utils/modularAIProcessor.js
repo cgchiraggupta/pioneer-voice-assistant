@@ -116,12 +116,10 @@ class ModularAIProcessor {
   async textToSpeech(text) {
     try {
       const response = await axios.post('https://api.sarvam.ai/text-to-speech', {
-        inputs: [{
-          target_language_code: "en-IN",
-          text: text,
-          speaker: "meera",
-          model: "bulbul:v3"
-        }]
+        target_language_code: "en-IN",
+        text: text,
+        speaker: "pooja",
+        model: "bulbul:v3"
       }, {
         headers: {
           'api-subscription-key': SARVAM_API_KEY,
