@@ -34,12 +34,13 @@ Voice → Whisper → Kimi K2.5 → Sarvam TTS → Voice Response
 - **Quality**: Good (7/10)
 - **Confidence**: Medium
 
-### 2. AI Processing: Kimi K2.5
-- **Installation**: Global (user has this)
-- **Processing**: Local
+### 2. AI Processing: Kimi K2.5 (Ollama)
+- **Installation**: Ollama local model
+- **Processing**: Local via Ollama
 - **Cost**: Free
 - **Quality**: Very Good (8/10)
 - **Confidence**: High
+- **Command**: `ollama run kimi-k2.5:cloud`
 
 ### 3. Text-to-Speech: Sarvam AI
 - **Installation**: API-based
@@ -128,12 +129,17 @@ Sarvam: Network intensive
 - [x] Architecture documentation
 - [x] Risk assessment
 - [x] Component research
+- [x] Kimi K2.5 verified (Ollama: kimi-k2.5:cloud)
+- [x] Sarvam API key obtained (sk_vdjmhd4o_cJhjgkayGjnGPgn8dpQMMFt6)
+- [x] Whisper installed locally (server/package.json)
+- [x] Modular AI processor utility created
+- [x] Axios dependency added
 
 ### 🔄 In Progress
-- [ ] Whisper installation verification
-- [ ] Kimi K2.5 connection testing
-- [ ] Sarvam API integration
 - [ ] Code refactoring (commenting out OpenAI)
+- [ ] Sarvam API integration testing
+- [ ] Kimi Ollama integration testing
+- [ ] Whisper integration testing
 
 ### ❌ Not Started
 - [ ] End-to-end testing
