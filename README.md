@@ -2,6 +2,8 @@
 
 A real-time voice conversation AI assistant. You speak — it listens, thinks, and talks back. Built with a modular architecture that supports multiple AI pipeline variations.
 
+> 🎛️ **Want to change the voice, speed, or personality?** → See **[VOICE_CONFIG.md](./VOICE_CONFIG.md)**
+
 ---
 
 ## 📁 Branch Structure
