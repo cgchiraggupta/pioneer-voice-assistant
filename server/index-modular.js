@@ -2,243 +2,197 @@ const WebSocket = require("ws");
 const http = require("http");
 const helper = require("./utils/audiofunctions.js");
 const ModularAIProcessor = require("./utils/modularAIProcessor.js");
-const server = http.createServer();
+
 require("dotenv").config();
 
-// Original OpenAI Configuration (COMMENTED OUT)
-// const gptKey = process.env.KEY;
+const server = http.createServer();
 const wss = new WebSocket.Server({ noServer: true });
 
-// Initialize Modular AI Processor
+// Single shared processor instance (one per server process)
 const modularProcessor = new ModularAIProcessor();
 
 wss.on("connection", async (ws) => {
-  console.log("Client connected to /Assistant (Modular Architecture)");
+  console.log("Client connected to /Assistant");
 
-  // Original OpenAI Code (COMMENTED OUT)
-  /*
-  // Message queue for messages received before gptClient is ready
-  const messageQueue = [];
-  let gptClientReady = false;
+  let isProcessorReady = false;
+  const audioQueue = [];
 
-  // Generate a gpt ws client for our user
-  const url =
-    "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01";
-  const gptClient = new WebSocket(url, {
-    headers: {
-      Authorization: `Bearer ${gptKey}`,
-      "OpenAI-Beta": "realtime=v1",
-    },
-  });
+  // Initialize the modular pipeline
+  try {
+    const initialised = await modularProcessor.initialize();
+    if (initialised) {
+      isProcessorReady = true;
+      ws.send("modular AI processor is ready for use");
+      console.log("Modular AI Processor initialised successfully");
 
-  // When gpt client gets connected to openai's WebSocket server
-  gptClient.on("open", function open() {
-    console.log("Connected to gpt WebSocket server.");
-    gptClientReady = true;
-
-    // Send queued messages
-    while (messageQueue.length > 0) {
-      const queuedMessage = messageQueue.shift();
-      gptClient.send(queuedMessage);
-    }
-
-    ws.send("your gpt client is ready for u to use");
-  });
-
-  // When our gpt client gets a message from the openai server
-  gptClient.on("message", (data) => {
-    const parsedData = JSON.parse(data);
-    console.log(parsedData.type);
-
-    if (parsedData.type === "response.audio.delta") {
-      const pcmData = helper.base64ToArrayBuffer(parsedData.delta);
-      const sampleRate = 24000;
-      const header = helper.createWavHeader(sampleRate, pcmData.byteLength);
-      const finalAudioBuffer = helper.concatenateWavHeaderAndData(
-        header,
-        pcmData,
-      );
-      ws.send(finalAudioBuffer);
+      // Drain any messages that arrived before init finished
+      while (audioQueue.length > 0) {
+        const queued = audioQueue.shift();
+        await processAudioData(queued, ws).catch((e) =>
+          console.error("Error processing queued audio:", e.message),
+        );
+      }
     } else {
-      ws.send(JSON.stringify(parsedData));
+      throw new Error("initialize() returned false");
     }
-  });
-
-  // Handle errors from gptClient
-  gptClient.on("error", (error) => {
-    console.error("GPT WebSocket error:", error);
+  } catch (error) {
+    console.error("Failed to initialise modular processor:", error.message);
     ws.send(
       JSON.stringify({
         type: "error",
         error: {
-          message: "Connection to OpenAI failed",
+          message: "Failed to initialise modular AI processor",
           details: error.message,
         },
       }),
     );
-  });
-
-  // Handle gptClient closure
-  gptClient.on("close", () => {
-    console.log("GPT WebSocket closed");
-    ws.close();
-  });
-  */
-
-  // NEW MODULAR ARCHITECTURE
-  let isProcessorReady = false;
-  const audioQueue = [];
-
-  // Initialize modular processor
-  try {
-    const initialized = await modularProcessor.initialize();
-    if (initialized) {
-      isProcessorReady = true;
-      ws.send("modular AI processor is ready for use");
-      console.log("✅ Modular AI Processor initialized successfully");
-    } else {
-      throw new Error("Failed to initialize modular processor");
-    }
-  } catch (error) {
-    console.error("❌ Failed to initialize modular processor:", error);
-    ws.send(JSON.stringify({
-      type: "error",
-      error: {
-        message: "Failed to initialize modular AI processor",
-        details: error.message,
-      },
-    }));
   }
 
-  // Process queued audio messages
-  const processQueue = async () => {
-    while (audioQueue.length > 0 && isProcessorReady) {
-      const audioData = audioQueue.shift();
-      try {
-        await processAudioData(audioData, ws);
-      } catch (error) {
-        console.error("Error processing queued audio:", error);
-      }
-    }
-  };
-
-  // Handle messages from the client
+  // Inbound message handler
   ws.on("message", async (message) => {
     try {
-      if (typeof message === 'string') {
-        const event = JSON.parse(message);
-        console.log("📨 Received JSON message:", event.type);
+      // Binary frames - raw audio from the browser
+      if (Buffer.isBuffer(message) || message instanceof ArrayBuffer) {
+        const buf = Buffer.isBuffer(message) ? message : Buffer.from(message);
+        console.log("Received binary audio, size:", buf.byteLength, "bytes");
 
-        // Handle different message types
-        switch (event.type) {
-          case 'audio.config':
-            // Audio configuration from client
-            console.log("🎵 Audio config received:", event);
+        if (isProcessorReady) {
+          await processAudioData(buf, ws);
+        } else {
+          console.log("Processor not ready, queueing audio");
+          audioQueue.push(buf);
+        }
+        return;
+      }
+
+      // Text frames - JSON events
+      const raw = message.toString();
+      let event;
+      try {
+        event = JSON.parse(raw);
+      } catch {
+        console.warn("Received non-JSON text frame, ignoring");
+        return;
+      }
+
+      console.log("Received JSON event:", event.type);
+
+      switch (event.type) {
+        // OpenAI-compatible client events
+        case "conversation.item.create": {
+          // Client sends base64 PCM audio inside this envelope
+          const content = event.item?.content?.[0];
+          const base64Audio = content?.audio;
+
+          if (!base64Audio) {
+            console.warn("conversation.item.create has no audio content");
             break;
-          
-          case 'test.connection':
-            // Test connection
-            ws.send(JSON.stringify({
+          }
+
+          const audioBuf = Buffer.from(base64Audio, "base64");
+          console.log(
+            "Decoded audio from conversation.item.create -",
+            audioBuf.byteLength,
+            "bytes",
+          );
+
+          if (isProcessorReady) {
+            await processAudioData(audioBuf, ws);
+          } else {
+            console.log("Processor not ready, queueing audio");
+            audioQueue.push(audioBuf);
+          }
+          break;
+        }
+
+        case "response.create":
+          // Processing is already triggered by conversation.item.create
+          console.log(
+            "response.create received, processing already in progress",
+          );
+          break;
+
+        case "audio.config":
+          console.log("Audio config received:", JSON.stringify(event));
+          break;
+
+        case "test.connection":
+          ws.send(
+            JSON.stringify({
               type: "test.response",
               status: isProcessorReady ? "ready" : "not_ready",
-              architecture: "modular"
-            }));
-            break;
-            
-          default:
-            console.log("🔍 Unknown message type:", event.type);
-        }
-      } else {
-        // Handle binary audio data
-        console.log("🎤 Received audio data, size:", message.byteLength, "bytes");
-        
-        if (isProcessorReady) {
-          await processAudioData(message, ws);
-        } else {
-          console.log("⏳ Queueing audio until processor is ready");
-          audioQueue.push(message);
-        }
+              architecture: "modular",
+            }),
+          );
+          break;
+
+        default:
+          console.log("Unknown event type:", event.type);
       }
-    } catch (e) {
-      console.error("❌ Error processing message from client:", e);
-      const errorEvent = {
-        type: "error",
-        error: {
-          message: "Failed to process message",
-          details: e.message,
-        },
-      };
-      ws.send(JSON.stringify(errorEvent));
+    } catch (err) {
+      console.error("Error handling inbound message:", err.message);
+      ws.send(
+        JSON.stringify({
+          type: "error",
+          error: {
+            message: "Failed to process message",
+            details: err.message,
+          },
+        }),
+      );
     }
   });
 
-  // Process audio data with modular pipeline
+  // Process audio through the full pipeline: Sarvam STT -> Groq -> Sarvam TTS
   const processAudioData = async (audioBuffer, clientWs) => {
     try {
-      console.log("🔄 Starting modular audio processing...");
-      
-      // Step 1-3: Process through Whisper → Kimi → Sarvam
+      console.log("Running modular pipeline...");
+
       const result = await modularProcessor.processAudio(audioBuffer);
-      
-      console.log("✅ Modular processing completed");
-      console.log("📝 Transcript:", result.transcript);
-      console.log("🧠 AI Response:", result.aiResponse);
-      
-      // Convert Sarvam audio to WAV format for client
-      const sampleRate = 24000;
-      const header = helper.createWavHeader(sampleRate, result.audioResponse.byteLength);
-      const finalAudioBuffer = helper.concatenateWavHeaderAndData(
-        header,
-        result.audioResponse,
+
+      console.log("Pipeline complete");
+      console.log("Transcript:", result.transcript);
+      console.log("AI response:", result.aiResponse);
+
+      // result.audioResponse is already a complete WAV file returned by Sarvam.
+      // Send binary first so the client queues it, then send the JSON done signal
+      // so the client knows to play the queued audio.
+      clientWs.send(result.audioResponse);
+
+      clientWs.send(
+        JSON.stringify({
+          type: "response.transcript",
+          transcript: result.transcript,
+          aiResponse: result.aiResponse,
+        }),
       );
-      
-      // Send transcript to client
-      clientWs.send(JSON.stringify({
-        type: "response.transcript",
-        transcript: result.transcript,
-        aiResponse: result.aiResponse
-      }));
-      
-      // Send audio response
-      clientWs.send(finalAudioBuffer);
-      
-      console.log("🔊 Audio response sent to client");
-      
+
+      console.log("Audio and transcript sent to client");
     } catch (error) {
-      console.error("❌ Modular audio processing failed:", error);
-      clientWs.send(JSON.stringify({
-        type: "error",
-        error: {
-          message: "Audio processing failed",
-          details: error.message,
-        },
-      }));
+      console.error("Modular pipeline failed:", error.message);
+      clientWs.send(
+        JSON.stringify({
+          type: "error",
+          error: {
+            message: "Audio processing failed",
+            details: error.message,
+          },
+        }),
+      );
     }
   };
 
-  // Original OpenAI Client Disconnection (COMMENTED OUT)
-  /*
-  // Handle client disconnection
+  // Disconnection and error handlers
   ws.on("close", () => {
     console.log("Client disconnected");
-    if (gptClient.readyState === WebSocket.OPEN) {
-      gptClient.close();
-    }
-  });
-  */
-
-  // NEW MODULAR CLIENT DISCONNECTION
-  ws.on("close", () => {
-    console.log("Client disconnected from modular architecture");
   });
 
-  // Handle errors
-  ws.on("error", (error) => {
-    console.error("WebSocket error:", error);
+  ws.on("error", (err) => {
+    console.error("WebSocket error:", err.message);
   });
 });
 
-// Handle upgrades to WebSocket connections
+// HTTP to WebSocket upgrade
 server.on("upgrade", (req, socket, head) => {
   if (req.url === "/Assistant") {
     wss.handleUpgrade(req, socket, head, (ws) => {
@@ -249,8 +203,10 @@ server.on("upgrade", (req, socket, head) => {
   }
 });
 
-// Start the server on port 4000
+// Start server
 server.listen(4000, () => {
-  console.log("🚀 Modular WebSocket server is listening on ws://localhost:4000/Assistant");
-  console.log("📋 Architecture: Whisper → Kimi K2.5 → Sarvam TTS");
+  console.log(
+    "Modular WebSocket server listening on ws://localhost:4000/Assistant",
+  );
+  console.log("Pipeline: Sarvam STT -> Groq -> Sarvam TTS");
 });

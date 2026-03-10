@@ -29,11 +29,21 @@ export default function Home() {
         try {
           const jsonMessage = JSON.parse(message);
           if (jsonMessage.type === "response.done") {
+            // Original OpenAI Realtime path
             setResPlaying(false);
             for (let i = 0; i < audioDataRef.current.length; i++) {
               await playAudioFromArrayBuffer(audioDataRef.current[i]);
             }
+            audioDataRef.current = [];
             setWords(jsonMessage.response.output[0].content[0].transcript);
+          } else if (jsonMessage.type === "response.transcript") {
+            // Modular architecture path — binary WAV was queued before this JSON arrived
+            setResPlaying(false);
+            for (let i = 0; i < audioDataRef.current.length; i++) {
+              await playAudioFromArrayBuffer(audioDataRef.current[i]);
+            }
+            audioDataRef.current = [];
+            setWords(jsonMessage.aiResponse || jsonMessage.transcript || "");
           }
         } catch (error) {
           console.error("Error parsing JSON:", error);
@@ -48,8 +58,9 @@ export default function Home() {
 
     const playAudioFromArrayBuffer = (audioBuffer) => {
       return new Promise((resolve, reject) => {
-        const audioContext = new (window.AudioContext ||
-          window.webkitAudioContext)();
+        const audioContext = new (
+          window.AudioContext || window.webkitAudioContext
+        )();
         audioContext.decodeAudioData(
           audioBuffer,
           (buffer) => {
@@ -262,9 +273,9 @@ export default function Home() {
       let channelData =
         audioBuffer.numberOfChannels > 1
           ? averageChannels(
-            audioBuffer.getChannelData(0),
-            audioBuffer.getChannelData(1),
-          )
+              audioBuffer.getChannelData(0),
+              audioBuffer.getChannelData(1),
+            )
           : audioBuffer.getChannelData(0);
 
       const pcm16Buffer = float32ToPCM16(channelData);
@@ -326,10 +337,11 @@ export default function Home() {
       ) : (
         <div className="flex flex-col items-center space-y-8">
           <button
-            className={`px-8 py-4 text-lg font-semibold text-white rounded-full shadow-lg transition-all ${isRecording
+            className={`px-8 py-4 text-lg font-semibold text-white rounded-full shadow-lg transition-all ${
+              isRecording
                 ? "bg-red-500 hover:bg-red-600"
                 : "bg-green-500 hover:bg-green-600"
-              }`}
+            }`}
             onClick={isRecording ? stopRecording : startRecording}
           >
             {isRecording ? "Stop Recording" : "Start Recording"}
