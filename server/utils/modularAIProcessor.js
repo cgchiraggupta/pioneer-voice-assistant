@@ -10,6 +10,62 @@ const execAsync = promisify(exec);
 const SARVAM_API_KEY = "sk_vdjmhd4o_cJhjgkayGjnGPgn8dpQMMFt6";
 const SARVAM_TTS_URL = "https://api.sarvam.ai/text-to-speech";
 const SARVAM_STT_URL = "https://api.sarvam.ai/speech-to-text";
+
+// ─── CHANGE VOICE HERE ───────────────────────────────────────────────────────
+// All available bulbul:v3 voices — just swap the value below:
+//
+// MALE:   "abhilash" | "karun"   | "hitesh"  | "aditya"  | "rahul"
+//         "rohan"    | "amit"    | "dev"     | "ratan"   | "varun"
+//         "manan"    | "sumit"   | "kabir"   | "aayan"   | "shubh"
+//         "ashutosh" | "advait"  | "anand"   | "tarun"   | "sunny"
+//         "mani"     | "gokul"   | "vijay"   | "mohit"   | "rehan"
+//         "soham"
+//
+// FEMALE: "pooja"    | "anushka" | "manisha" | "vidya"   | "arya"
+//         "ritu"     | "priya"   | "neha"    | "simran"  | "kavya"
+//         "ishita"   | "shreya"  | "roopa"   | "amelia"  | "sophia"
+//         "tanya"    | "shruti"  | "suhani"  | "kavitha" | "rupali"
+//
+// SPEED:  TTS_PACE — 0.5 (slow) to 2.0 (fast), default is 1.0
+// ─────────────────────────────────────────────────────────────────────────────
+const TTS_SPEAKER = "pooja";
+const TTS_PACE = 1.0;
+
+// Wrap raw PCM16 mono data in a proper WAV header so Sarvam STT accepts it
+function wrapPCM16InWavHeader(
+  pcmBuffer,
+  sampleRate = 16000,
+  numChannels = 1,
+  bitsPerSample = 16,
+) {
+  const byteRate = sampleRate * numChannels * (bitsPerSample / 8);
+  const blockAlign = numChannels * (bitsPerSample / 8);
+  const dataSize = pcmBuffer.byteLength;
+  const headerSize = 44;
+  const wavBuffer = Buffer.alloc(headerSize + dataSize);
+
+  // RIFF chunk
+  wavBuffer.write("RIFF", 0);
+  wavBuffer.writeUInt32LE(36 + dataSize, 4);
+  wavBuffer.write("WAVE", 8);
+
+  // fmt sub-chunk
+  wavBuffer.write("fmt ", 12);
+  wavBuffer.writeUInt32LE(16, 16); // Subchunk1Size for PCM
+  wavBuffer.writeUInt16LE(1, 20); // AudioFormat = PCM
+  wavBuffer.writeUInt16LE(numChannels, 22);
+  wavBuffer.writeUInt32LE(sampleRate, 24);
+  wavBuffer.writeUInt32LE(byteRate, 28);
+  wavBuffer.writeUInt16LE(blockAlign, 32);
+  wavBuffer.writeUInt16LE(bitsPerSample, 34);
+
+  // data sub-chunk
+  wavBuffer.write("data", 36);
+  wavBuffer.writeUInt32LE(dataSize, 40);
+  pcmBuffer.copy(wavBuffer, headerSize);
+
+  return wavBuffer;
+}
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 const TEMP_DIR = path.join(__dirname, "../temp");
 
@@ -72,7 +128,8 @@ class ModularAIProcessor {
         {
           target_language_code: "en-IN",
           text: "Hello world",
-          speaker: "pooja",
+          speaker: TTS_SPEAKER,
+          pace: TTS_PACE,
           model: "bulbul:v3",
         },
         {
@@ -90,9 +147,11 @@ class ModularAIProcessor {
       console.log("Sarvam TTS connected successfully");
       return true;
     } catch (error) {
-      throw new Error(
-        "Sarvam TTS check failed: " + (error.response?.data || error.message),
-      );
+      const detail = error.response?.data
+        ? JSON.stringify(error.response.data)
+        : error.message;
+      console.error("Sarvam TTS raw error:", detail);
+      throw new Error("Sarvam TTS check failed: " + detail);
     }
   }
 
@@ -133,19 +192,49 @@ class ModularAIProcessor {
   // Active: Sarvam STT - cloud, no local dependencies
   async speechToText(audioBuffer) {
     const FormData = require("form-data");
-    const tempInput = path.join(TEMP_DIR, `input_${Date.now()}.wav`);
+
+    // Detect format from magic bytes so we use the right extension + mime type
+    const header = audioBuffer.slice(0, 4).toString("ascii");
+    const isWav = header === "RIFF";
+    const isWebM = audioBuffer.slice(0, 4).toString("hex") === "1a45dfa3";
+    const isOgg = audioBuffer.slice(0, 4).toString("ascii") === "OggS";
+
+    let ext, mimeType;
+    if (isWav) {
+      ext = "wav";
+      mimeType = "audio/wav";
+    } else if (isWebM) {
+      ext = "webm";
+      mimeType = "audio/webm";
+    } else if (isOgg) {
+      ext = "ogg";
+      mimeType = "audio/ogg";
+    } else {
+      // Unknown — wrap as PCM WAV so Sarvam at least gets a valid container
+      console.warn(
+        "Unknown audio format, wrapping as PCM WAV. Header hex:",
+        audioBuffer.slice(0, 4).toString("hex"),
+      );
+      audioBuffer = wrapPCM16InWavHeader(audioBuffer);
+      ext = "wav";
+      mimeType = "audio/wav";
+    }
+
+    const tempInput = path.join(TEMP_DIR, `input_${Date.now()}.${ext}`);
 
     try {
       fs.writeFileSync(tempInput, audioBuffer);
-      console.log("Running Sarvam STT...");
+      console.log(
+        `Running Sarvam STT on ${ext} file (${audioBuffer.byteLength} bytes)...`,
+      );
 
       const formData = new FormData();
       formData.append("file", fs.createReadStream(tempInput), {
-        filename: "audio.wav",
-        contentType: "audio/wav",
+        filename: `audio.${ext}`,
+        contentType: mimeType,
       });
       formData.append("language_code", "en-IN");
-      formData.append("model", "saaras:v2");
+      formData.append("model", "saarika:v2.5");
 
       const response = await axios.post(SARVAM_STT_URL, formData, {
         headers: {
@@ -328,7 +417,8 @@ class ModularAIProcessor {
         {
           target_language_code: "en-IN",
           text: safeText,
-          speaker: "pooja",
+          speaker: TTS_SPEAKER,
+          pace: TTS_PACE,
           model: "bulbul:v3",
         },
         {
