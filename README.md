@@ -287,3 +287,121 @@ MIT License
 ---
 
 > Built ahead of the mainstream voice AI trend — November 2024.
+
+---
+
+## 🔄 Iteration History — What Changed & Why
+
+A full breakdown of every version, what was broken, and exactly what was fixed.
+
+---
+
+### Iteration 0 — Original Build (November 2024)
+**Branch:** `main` → `server/index.js`
+
+**What it did:**
+- Browser captured mic audio
+- Sent it directly to Node.js server via WebSocket
+- Server proxied it straight to OpenAI GPT-4o Realtime API (WebSocket-to-WebSocket)
+- OpenAI streamed audio chunks back in real time
+- Server forwarded audio deltas back to client
+
+**What was good:**
+- Lowest latency of all versions
+- Single API handles STT + AI + TTS all in one
+- True real-time streaming, no waiting for full response
+
+**What was the limitation:**
+- Required OpenAI Realtime API access (expensive, paid tier)
+- No control over voice, speed, or personality separately
+- Locked into OpenAI ecosystem entirely
+
+---
+
+### Iteration 1 — Modular Local Stack (Whisper + Kimi + Sarvam)
+**Branch:** `feature/modular-ai-architecture` → `server/index-modular.js` + `server/utils/modularAIProcessor.js`
+
+**What changed vs Iteration 0:**
+| Part | Before | After |
+|------|--------|-------|
+| STT | OpenAI Realtime (built-in) | Whisper CLI running locally on Apple MPS GPU |
+| AI Model | GPT-4o | Kimi K2.5 via Ollama (cloud-routed) |
+| TTS | OpenAI Realtime (built-in) | Sarvam `bulbul:v3` cloud API |
+| Architecture | Single WebSocket proxy | 3-step sequential pipeline |
+
+**What was good:**
+- No OpenAI cost
+- Full control over each step independently
+- Whisper runs on Apple Silicon GPU (MPS) — reasonably fast
+
+**What was broken / painful:**
+- Whisper CLI needed to be installed separately (`pipx install openai-whisper`)
+- Ollama needed to be running locally with Kimi model pulled
+- High latency — Whisper transcription alone took 2-5 seconds
+- Heavy local setup — not portable
+
+**Status:** Code preserved in comments inside `modularAIProcessor.js` — can be re-enabled anytime
+
+---
+
+### Iteration 2 — Cloud Stack (Sarvam STT + Groq + Sarvam TTS) ✅ Current
+**Branch:** `feature/modular-ai-architecture` + `PJ` (merged) → same files, different active code
+
+**What changed vs Iteration 1:**
+| Part | Before (Iteration 1) | After (Iteration 2) |
+|------|---------------------|---------------------|
+| STT | Whisper local CLI | Sarvam `saarika:v2.5` cloud API |
+| AI Model | Kimi K2.5 via Ollama | Groq `llama-3.3-70b-versatile` |
+| TTS | Sarvam `bulbul:v3` | Sarvam `bulbul:v3` (same) |
+| Audio sent from client | PCM16 base64 encoded | Raw WebM/Opus binary (no conversion) |
+| Socket reference | React `useState` (stale closure bug) | `useRef` (always current) |
+| Audio playback | New `AudioContext` per call (suspended by Chrome) | Fresh `Audio` element + warm-up on user gesture |
+| Race condition | Drain ran before WAV arrived | 50ms polling wait for binary before drain |
+
+---
+
+### 🐛 Every Bug We Hit in Iteration 2 and How We Fixed It
+
+**Bug 1 — 400 from Sarvam TTS**
+- **Cause:** Speaker name `"Pooja"` (capital P) — docs showed it capitalised but API validates lowercase only
+- **Fix:** Changed to `"pooja"` everywhere
+
+**Bug 2 — `[object Object]` in error logs**
+- **Cause:** `error.response.data` is an object, concatenating it to a string gives `[object Object]`
+- **Fix:** `JSON.stringify(error.response.data)` to actually read the Sarvam error message
+
+**Bug 3 — Sarvam STT returning empty transcript**
+- **Cause:** Client was converting WebM/Opus → PCM16 manually via `AudioContext` at forced 16kHz. Browser doesn't actually resample — it decodes at native 48kHz, so the resulting WAV had wrong sample count and was garbled noise to Sarvam
+- **Fix:** Scrapped the entire conversion chain. Send raw WebM/Opus binary directly. Sarvam STT accepts it natively. Zero transformation
+
+**Bug 4 — STT model name `saarika:v2` rejected**
+- **Cause:** Sarvam deprecated `saarika:v2` — model no longer exists
+- **Fix:** Updated to `saarika:v2.5`
+
+**Bug 5 — Audio silently not sending after stop recording**
+- **Cause:** `socket` stored in React `useState` — stale closure inside `processAudio()` was reading `null` instead of the live WebSocket
+- **Fix:** Moved to `socketRef` using `useRef` — always points to current value from any closure
+
+**Bug 6 — You could see the text response but hear nothing**
+- **Cause:** Chrome's autoplay policy blocks `audio.play()` called from a WebSocket `onmessage` callback — not a user gesture, so Chrome silently refuses
+- **Fix:** Called `warmUpAudio()` inside the `startRecording` click handler (a real user gesture) — plays a tiny silent WAV to register the page as audio-trusted. All future `play()` calls on the page are then allowed
+
+**Bug 7 — Audio played first time only, silent on second response**
+- **Cause:** Single reused `Audio` element was in `ended` state after first playback — setting new `src` on an ended element behaves inconsistently across Chrome versions
+- **Fix:** Create a brand new `Audio(url)` element for every playback — fresh state every time
+
+**Bug 8 — Race condition: WAV arrived after drain, never played**
+- **Cause:** Server sends binary WAV first then JSON transcript — but on the network the JSON arrived at client before the binary. `drainQueue` ran on empty queue, WAV landed after and sat there forever
+- **Evidence:** Console showed `[WS] queue size before drain: 0` then `[WS] binary frame received — 71544 bytes` immediately after
+- **Fix:** Added a `waitForAudio()` polling function — checks every 50ms for up to 5 seconds for the binary to arrive before calling `drainQueue`
+
+---
+
+### 📊 Latency Comparison Across Iterations
+
+| Step | Iteration 0 | Iteration 1 | Iteration 2 |
+|------|------------|------------|------------|
+| STT | ~0ms (streaming) | ~2000-5000ms (Whisper local) | ~800-1500ms (Sarvam cloud) |
+| AI | ~300ms (streaming) | ~500-1000ms (Kimi/Ollama) | ~300-500ms (Groq) |
+| TTS | ~0ms (streaming) | ~500-1000ms (Sarvam) | ~500-1000ms (Sarvam) |
+| **Total** | **Real-time** | **~3-7 seconds** | **~2-3 seconds** |
