@@ -61,4 +61,8 @@ function concatenateWavHeaderAndData(header, pcmData) {
   return combinedBuffer;
 }
 
-export { createWavHeader, concatenateWavHeaderAndData, base64ToArrayBuffer };
+module.exports = {
+  createWavHeader,
+  concatenateWavHeaderAndData,
+  base64ToArrayBuffer,
+};

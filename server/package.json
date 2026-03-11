@@ -1,10 +1,14 @@
 {
   "dependencies": {
+    "axios": "^1.13.6",
     "dotenv": "^16.4.5",
     "nodemon": "^3.1.7",
+    "openai-whisper": "^1.0.2",
     "ws": "^8.18.0"
   },
   "scripts": {
-    "dev": "nodemon index.js"
+    "dev": "nodemon index.js",
+    "dev:openai": "MODE=openai nodemon index.js",
+    "dev:modular": "MODE=modular nodemon index.js"
   }
 }
