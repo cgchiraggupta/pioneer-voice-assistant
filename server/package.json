@@ -7,6 +7,8 @@
     "ws": "^8.18.0"
   },
   "scripts": {
-    "dev": "nodemon index-modular.js"
+    "dev": "nodemon index.js",
+    "dev:openai": "MODE=openai nodemon index.js",
+    "dev:modular": "MODE=modular nodemon index.js"
   }
 }
